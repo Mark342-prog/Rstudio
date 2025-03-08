@@ -1,0 +1,282 @@
+---
+title: "proyecto2"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+date: "2025-01-30"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+path <- "C:/Users/markp/OneDrive/Documentos/house/train.csvv"
+
+if (file.exists(path)) {
+  content <- read.csv(path)
+  print(content)
+} else {
+  print("El archivo no existe. Verifica la ruta.")
+}
+library(cluster) 
+library(e1071)
+library(mclust) 
+library(fpc) 
+library(NbClust) 
+library(factoextra)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(caret)
+library(car)
+library(tidyverse)
+path <- "C:/Users/markp/OneDrive/Documentos/house/train.csv"
+content <- read_csv(path, locale = locale(encoding = "UTF-8"), show_col_types = FALSE)
+
+
+```
+## Número de clusters que se deberían hacer
+Iniciamos creando los clusters
+```{r cluster start,results='show', echo=FALSE}
+datos <- content %>% select(-Id)
+
+
+# --------------------------------------------------------------------------------
+# Reemplazar valores inválidos como espacios vacíos o "NA" textuales
+datos[datos == ""] <- NA
+# QUITAR SOLO FILAS con más del 50% de datos faltantes en lugar de eliminar columnas completas
+datos_filtrado <- datos %>% filter(rowMeans(is.na(.)) < 0.5)
+# SELECCIONAR SOLO COLUMNAS NUMÉRICAS después de filtrar filas
+datos_numericos <- datos_filtrado %>% select_if(is.numeric)
+# Si aún quedan NAs en columnas, los llenamos con la mediana de cada variable
+datos_numericos <- datos_numericos %>%
+  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
+# Normalizar datos
+datos_norm <- scale(datos_numericos) %>% as.data.frame()
+datos_norm <- na.omit(datos_norm)
+datos_norm <- datos_norm[, apply(datos_norm, 2, var) > 0]
+varianzas <- apply(datos_norm, 2, var)
+# Verifica las columnas con muy baja varianza
+low_variance_columns <- which(varianzas < 1e-6)  # Ajusta este umbral si es necesario
+print(low_variance_columns)
+# Eliminar columnas con muy baja varianza
+datos_norm <- datos_norm[, varianzas > 1e-6]
+# Verificar dimensiones
+print(dim(datos_norm))  # Debe tener más de 2 columnas
+
+#----------------------------------------------------------------------------------
+set.seed(123)  # Para reproducibilidad
+indices <- sample(1:nrow(datos), size = 0.3 * nrow(datos))  # 30% de los datos
+subset_datos <- datos[indices, ]
+
+#----------------------------------------------------------------------------------
+# Reemplazar valores inválidos como espacios vacíos o "NA" textuales
+subset_datos[subset_datos == ""] <- NA
+# QUITAR SOLO FILAS con más del 50% de subset_datos faltantes en lugar de eliminar columnas completas
+subset_datos_filtrado <- subset_datos %>% filter(rowMeans(is.na(.)) < 0.5)
+# SELECCIONAR SOLO COLUMNAS NUMÉRICAS después de filtrar filas
+subset_datos_numericos <- subset_datos_filtrado %>% select_if(is.numeric)
+# Si aún quedan NAs en columnas, los llenamos con la mediana de cada variable
+subset_datos_numericos <- subset_datos_numericos %>%
+  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
+# Normalizar datos
+subset_datos_norm <- scale(subset_datos_numericos) %>% as.data.frame()
+subset_datos_norm <- na.omit(subset_datos_norm)
+subset_datos_norm <- subset_datos_norm[, apply(subset_datos_norm, 2, var) > 0]
+varianzas <- apply(subset_datos_norm, 2, var)
+# Verifica las columnas con muy baja varianza
+low_variance_columns <- which(varianzas < 1e-6)  # Ajusta este umbral si es necesario
+print(low_variance_columns)
+# Eliminar columnas con muy baja varianza
+subset_datos_norm <- subset_datos_norm[, varianzas > 1e-6]
+print(dim(subset_datos_norm))
+
+#----------------------------------------------------------------------------------
+set.seed(123) 
+km <- kmeans(datos_norm, centers = 3, iter.max = 100)
+
+
+content$Cluster_KMeans <- km$cluster
+
+wss <- (nrow(datos_norm) - 1) * sum(apply(datos_norm, 2, var))
+
+for (i in 2:10) 
+  wss[i] <- sum(kmeans(datos_norm, centers = i)$withinss)
+
+plot(1:10, wss, type="b", xlab="Numero de Clusters", ylab="Suma de Cuadrados Interna")
+
+#------------------------------------------------------------------------------------
+
+
+#nb <- NbClust(datos_norm, distance = "euclidean", min.nc = 2, max.nc = 40, method = "complete", index = "all")
+
+
+```
+Esta gráfica sugiere que 3 es una muy buena opción y que sería optimo, aunque esto es solo una supisición
+## Clustering jerárgico de todos los datos
+
+```{r cluster jer,results='show', echo=FALSE}
+hc <- hclust(dist(datos_norm))
+plot(hc)
+rect.hclust(hc, k = 3)
+content$Cluster_HC <- cutree(hc, k = 3)
+
+fcm <- cmeans(datos_norm, centers = 3)
+content$Cluster_FCM <- fcm$cluster
+
+mc <- Mclust(datos_norm, 3)
+plot(mc, what = "classification", main="MClust Classification")
+content$Cluster_Gaussian <- mc$classification
+
+
+
+
+```
+Este Cluster es meramente de TODOS los datos, no se trabajará con estos datos, pero funciona como una comparativa realista con lo que estamos a punto de ver
+
+## Clustering de Datos de prueba
+
+```{r cluster jer2,results='show', echo=FALSE}
+hc <- hclust(dist(subset_datos_norm))  
+plot(hc)  
+rect.hclust(hc, k = 3)  
+subset_datos$Cluster_HC <- cutree(hc, k = 3)
+
+
+
+fcm <- cmeans(subset_datos_norm, centers = 3)  
+subset_datos$Cluster_FCM <- fcm$cluster
+
+mc <- Mclust(subset_datos_norm, 3)
+plot(mc, what = "classification", main="MClust Classification")
+subset_datos$Cluster_Gaussian <- mc$classification
+
+
+
+
+```
+Estos SOn los clusteres creados de manera exitosa con los datos de prueba (que son el 30% unicamente)
+
+resultados para los resumidos datos :
+
+```{r res,results='show', echo=FALSE}
+
+sil_fcm <- silhouette(fcm$cluster, dist(subset_datos_norm))
+mean(sil_fcm[,3])  # Silueta para Fuzzy C-Means
+
+sil_mg <- silhouette(mc$classification, dist(subset_datos_norm))
+mean(sil_mg[,3])  # Silueta para Mixture of Gaussians
+
+# Visualización de Clustering Jerárquico
+hc.cut <- hcut(subset_datos_norm, k = 6, hc_method = "complete")
+fviz_dend(hc.cut, show_labels = FALSE, rect = TRUE)
+fviz_cluster(hc.cut, ellipse.type = "convex")
+
+```
+Estos son los clusteres, son 6 dado que dado a las limitaciones veces son extrañas pero cada una logra traslaparese en algun sentido
+
+resultados para los datos limitados:
+
+```{r re2s,results='show', echo=FALSE}
+
+modelo_simple <- lm(SalePrice ~ GrLivArea, data = subset_datos_numericos)
+
+summary(modelo_simple)
+Sys.setlocale("LC_ALL", "es_ES.UTF-8") 
+
+
+ggplot(subset_datos, aes(x = GrLivArea, y = SalePrice)) +
+  geom_point(color = "blue", alpha = 0.5, size = 1.5) +  
+  geom_smooth(method = "lm", color = "red", se = TRUE) + 
+  scale_y_continuous(labels = scales::comma) + 
+  labs(
+    title = "Relación entre Área Habitable y Precio de Venta",
+    x = "Área Habitable (GrLivArea en pies cuadrados)",
+    y = "Precio de Venta (USD)"
+  ) +
+  theme_minimal() +  
+  coord_cartesian(ylim = c(0, 500000))  
+
+
+
+
+
+
+modelo_stepwise <- step(lm(SalePrice ~ ., data = subset_datos_numericos), direction = "both")
+summary(modelo_stepwise)
+
+plot(modelo_simple$residuals, main="Residuos del Modelo", ylab="Residuos", xlab="Índice")
+abline(h=0, col="red")
+
+# Histograma de residuos
+hist(modelo_simple$residuals, main="Distribución de Residuos", col="lightblue")
+
+
+shapiro.test(modelo_simple$residuals)
+
+
+nuevos_datos <- data.frame(GrLivArea = c(1500, 2000, 2500),
+                           YearBuilt = c(2000, 1990, 2010),
+                           OverallQual = c(7, 6, 8),
+                           TotalBsmtSF = c(900, 1200, 1500))
+
+# Predecir precios de venta con el modelo entrenado
+predicciones <- predict(modelo_simple, nuevos_datos)
+
+# Mostrar predicciones
+print(predicciones)
+```
+Gracias a estas gráficas podemos ver que hay una tendencia positiva entre el área habitable y el precio de venta, entre mayor el area mayor el precio, lo cual se espera, pero hay una variabilidad no aplicada, lo cual nos deja con la duda de si hay factores extra, en cuanto a los residuos del modelo, pasan entre 1500 lo que puede implicar que tiene errores significativos.
+
+La distribución de residuos menciona frecuencias altas en ciertos rangos. Entre Los residuos presentan un rango bastante aplico, lo cual indica observaciones atípicas donde el modelo subestima o sobrestima drásticamente el precio real, la presencia de residuos sugiere también que es insuficiente para la complejidad de los datos, así que eso mismo haremos.
+
+```{r re3s,results='show', echo=FALSE}
+
+ggplot(subset_datos, aes(x = MiscVal, y = SalePrice)) +
+  geom_point(color = "blue", alpha = 0.5) + 
+  geom_smooth(method = "lm", color = "red", se = TRUE) +  
+  labs(title = "Relación entre MiscVal y SalePrice",
+       x = "MiscVal (Valor misceláneo)",
+       y = "SalePrice (Precio de Venta)") +
+  theme_minimal()
+ggplot(subset_datos, aes(x = MiscVal)) +
+  geom_histogram(binwidth = 100, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Distribución de MiscVal", x = "MiscVal", y = "Frecuencia") +
+  theme_minimal()
+
+ggplot(subset_datos, aes(x = log1p(MiscVal), y = SalePrice)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Relación entre log(MiscVal + 1) y SalePrice",
+       x = "log(MiscVal + 1)", y = "SalePrice") +
+  theme_minimal()
+
+cor(subset_datos$MiscVal, subset_datos$SalePrice, use = "complete.obs")
+
+```
+Intentando de todo llegamos a la conclusión que estos datos no tienen nada que ver uno del otro, siendo esto un buen ejemplo de que es más complicado de lo que a primera vista se ve, ya que usualmente se pensaría que estos 2 estarían relacionados, pero realmente parece que no es el hecho en este momento
+
+## Intento de multicolinealidad o sobreajuste con GrLivArea, OverallQual y TotalBsmtSF
+
+```{r re4s,results='show', echo=FALSE}
+
+
+set.seed(123)  
+indices <- sample(1:nrow(datos), 0.8 * nrow(datos))  
+train <- datos[indices, ]
+test <- datos[-indices, ]
+
+modelo_train <- lm(SalePrice ~ GrLivArea + OverallQual + TotalBsmtSF, data = train)
+predicciones <- predict(modelo_train, newdata = test)
+
+# Evaluar error en datos de prueba
+error <- mean((predicciones - test$SalePrice)^2)
+print(error)
+
+```
+Intentando encontrar otras cosas correlacionadas no se logra encontrar un patrón claro, aunque son muchas columnas, estudiando una a una entre las más obviadas a otras, realmente no se encuentra colinealidad entre ellas, pero no ha resultado, aun usando los datos completos, aunque usando 80% de entrenamiento
+
+## Resumen
+
+Logre hacer que cada modelo sacará algo interesante de cada uno, sin embargo, se lograrón mejores resultados utilizando los más básicos, como lo es la regresión lineal y Histogramas, utilizando multicolealidad dealmente no se logró algo interesante, pero es sumamente interesante ver el resultado de todas formas 
