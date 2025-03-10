@@ -1,8 +1,8 @@
 ---
 title: "proyecto2"
 output:
-  word_document: default
   pdf_document: default
+  word_document: default
   html_document: default
 date: "2025-01-30"
 ---
@@ -31,252 +31,275 @@ library(tidyr)
 library(caret)
 library(car)
 library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(e1071)
+library(randomForest)
+library(mlr)
 path <- "C:/Users/markp/OneDrive/Documentos/house/train.csv"
-content <- read_csv(path, locale = locale(encoding = "UTF-8"), show_col_types = FALSE)
+datos <- read_csv(path, locale = locale(encoding = "UTF-8"), show_col_types = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 
 
 ```
-## Número de clusters que se deberían hacer
-Iniciamos creando los clusters
-```{r cluster start,results='show', echo=FALSE}
-datos <- content %>% select(-Id)
+## Utilizando los datos
+Vamos a volver a utilizar los datos de train una vez más, esta vez utilizaremos todos
 
 
-# --------------------------------------------------------------------------------
-# Reemplazar valores inválidos como espacios vacíos o "NA" textuales
-datos[datos == ""] <- NA
-# QUITAR SOLO FILAS con más del 50% de datos faltantes en lugar de eliminar columnas completas
-datos_filtrado <- datos %>% filter(rowMeans(is.na(.)) < 0.5)
-# SELECCIONAR SOLO COLUMNAS NUMÉRICAS después de filtrar filas
-datos_numericos <- datos_filtrado %>% select_if(is.numeric)
-# Si aún quedan NAs en columnas, los llenamos con la mediana de cada variable
-datos_numericos <- datos_numericos %>%
-  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
-# Normalizar datos
-datos_norm <- scale(datos_numericos) %>% as.data.frame()
-datos_norm <- na.omit(datos_norm)
-datos_norm <- datos_norm[, apply(datos_norm, 2, var) > 0]
-varianzas <- apply(datos_norm, 2, var)
-# Verifica las columnas con muy baja varianza
-low_variance_columns <- which(varianzas < 1e-6)  # Ajusta este umbral si es necesario
-print(low_variance_columns)
-# Eliminar columnas con muy baja varianza
-datos_norm <- datos_norm[, varianzas > 1e-6]
-# Verificar dimensiones
-print(dim(datos_norm))  # Debe tener más de 2 columnas
+```{r variables, echo=FALSE}
+# Cargar paquetes necesarios
+library(dplyr)
+datos <- datos %>% select(-Id)
+datos[is.na(datos$LotFrontage), "LotFrontage"] <- median(datos$LotFrontage, na.rm = TRUE)
+datos[is.na(datos$MasVnrArea), "MasVnrArea"] <- median(datos$MasVnrArea, na.rm = TRUE)
+datos[is.na(datos$BsmtFinSF1), "BsmtFinSF1"] <- median(datos$BsmtFinSF1, na.rm = TRUE)
+datos[is.na(datos$BsmtFinSF2), "BsmtFinSF2"] <- median(datos$BsmtFinSF2, na.rm = TRUE)
+datos[is.na(datos$BsmtUnfSF), "BsmtUnfSF"] <- median(datos$BsmtUnfSF, na.rm = TRUE)
+datos[is.na(datos$TotalBsmtSF), "TotalBsmtSF"] <- median(datos$TotalBsmtSF, na.rm = TRUE)
+datos[is.na(datos$GarageYrBlt), "GarageYrBlt"] <- median(datos$GarageYrBlt, na.rm = TRUE)
+datos[is.na(datos$GarageCars), "GarageCars"] <- median(datos$GarageCars, na.rm = TRUE)
+datos[is.na(datos$GarageArea), "GarageArea"] <- median(datos$GarageArea, na.rm = TRUE)
+datos[is.na(datos$MiscVal), "MiscVal"] <- median(datos$MiscVal, na.rm = TRUE)
 
-#----------------------------------------------------------------------------------
-set.seed(123)  # Para reproducibilidad
-indices <- sample(1:nrow(datos), size = 0.3 * nrow(datos))  # 30% de los datos
-subset_datos <- datos[indices, ]
+# Eliminar columna innecesaria (puedes modificar según sea necesario)
+datos$Alley <- NULL  # Ejemplo: eliminamos Alley si tiene demasiados NA
 
-#----------------------------------------------------------------------------------
-# Reemplazar valores inválidos como espacios vacíos o "NA" textuales
-subset_datos[subset_datos == ""] <- NA
-# QUITAR SOLO FILAS con más del 50% de subset_datos faltantes en lugar de eliminar columnas completas
-subset_datos_filtrado <- subset_datos %>% filter(rowMeans(is.na(.)) < 0.5)
-# SELECCIONAR SOLO COLUMNAS NUMÉRICAS después de filtrar filas
-subset_datos_numericos <- subset_datos_filtrado %>% select_if(is.numeric)
-# Si aún quedan NAs en columnas, los llenamos con la mediana de cada variable
-subset_datos_numericos <- subset_datos_numericos %>%
-  mutate_all(~ifelse(is.na(.), median(., na.rm = TRUE), .))
-# Normalizar datos
-subset_datos_norm <- scale(subset_datos_numericos) %>% as.data.frame()
-subset_datos_norm <- na.omit(subset_datos_norm)
-subset_datos_norm <- subset_datos_norm[, apply(subset_datos_norm, 2, var) > 0]
-varianzas <- apply(subset_datos_norm, 2, var)
-# Verifica las columnas con muy baja varianza
-low_variance_columns <- which(varianzas < 1e-6)  # Ajusta este umbral si es necesario
-print(low_variance_columns)
-# Eliminar columnas con muy baja varianza
-subset_datos_norm <- subset_datos_norm[, varianzas > 1e-6]
-print(dim(subset_datos_norm))
+# Seleccionar solo columnas numéricas
+colNum <- c("LotFrontage", "LotArea", "MasVnrArea", "BsmtFinSF1", "BsmtFinSF2", 
+            "BsmtUnfSF", "TotalBsmtSF", "1stFlrSF", "2ndFlrSF", "GrLivArea", 
+            "GarageYrBlt", "GarageCars", "GarageArea", "WoodDeckSF", "OpenPorchSF", 
+            "EnclosedPorch", "ScreenPorch", "PoolArea", "MiscVal", "SalePrice")
 
-#----------------------------------------------------------------------------------
-set.seed(123) 
-km <- kmeans(datos_norm, centers = 3, iter.max = 100)
+numericas <- datos[, colNum]
 
 
-content$Cluster_KMeans <- km$cluster
-
-wss <- (nrow(datos_norm) - 1) * sum(apply(datos_norm, 2, var))
-
-for (i in 2:10) 
-  wss[i] <- sum(kmeans(datos_norm, centers = i)$withinss)
-
-plot(1:10, wss, type="b", xlab="Numero de Clusters", ylab="Suma de Cuadrados Interna")
-
-#------------------------------------------------------------------------------------
+datos <- datos %>% mutate_if(is.character, as.factor)
 
 
-#nb <- NbClust(datos_norm, distance = "euclidean", min.nc = 2, max.nc = 40, method = "complete", index = "all")
+summary(datos)
 
 
 ```
-Esta gráfica sugiere que 3 es una muy buena opción y que sería optimo, aunque esto es solo una supisición
-## Clustering jerárgico de todos los datos
+## haciendo el Arból
+A continuacuón vamos a intentar hacer un árbol y intentando hacerlo de manera en que muestre patrones que previamente puede que fuesen omitidas
+```{r tree, echo=FALSE}
 
-```{r cluster jer,results='show', echo=FALSE}
-hc <- hclust(dist(datos_norm))
-plot(hc)
-rect.hclust(hc, k = 3)
-content$Cluster_HC <- cutree(hc, k = 3)
-
-fcm <- cmeans(datos_norm, centers = 3)
-content$Cluster_FCM <- fcm$cluster
-
-mc <- Mclust(datos_norm, 3)
-plot(mc, what = "classification", main="MClust Classification")
-content$Cluster_Gaussian <- mc$classification
+datos <- datos %>% mutate_if(is.character, as.factor)
 
 
+arbol <- rpart(SalePrice ~ ., data = datos, method = "anova")
+
+
+rpart.plot(arbol)
+
+```
+
+
+## Resultados
+
+La variable más importante es OverallQual.
+
+Si OverallQual < 8, el precio promedio baja a 158,000 USD.
+Si OverallQual ≥ 8, el precio promedio sube a 305,000 USD.
+Para viviendas con OverallQual < 8 (84% de los datos):
+
+El barrio (Neighborhood) influye bastante. Si pertenece a ciertos barrios de menor precio, el valor disminuye.
+
+1stFlrSF < 1051 pies cuadrados indica precios bajos (~118,000 USD).
+
+GrLivArea (área habitable sobre el suelo) también es clave. Si es menor a 1,120, el precio baja (~135,000 USD), pero si es mayor, sube (~185,000 USD).
+
+BsmtFinSF1 (área terminada del sótano) también juega un rol en el precio.
+Para viviendas con OverallQual ≥ 8 (16% de los datos):
+
+Si OverallQual = 8, entonces GrLivArea (< 1972 vs. ≥ 1972) sigue siendo una variable clave. Casas con más área tienden a costar más (~315,000 USD).
+
+Si OverallQual ≥ 9, la casa es más cara (~388,000 a 450,000 USD), y nuevamente el tamaño (GrLivArea) es crucial.
+## Cambiando profundidades
+Vamos a ir cambiando la profundidad del gráfico entre más vamos 
+vamos a empezar con depth 3
+```{r tree2, echo=FALSE}
+
+arbol2 <- rpart(SalePrice ~ ., data = datos, control = rpart.control(maxdepth = 3))
+
+
+rpart.plot(arbol2)
+```
+
+Ahora sigamos con deapth 4
+
+```{r tree3, echo=FALSE}
+
+arbol3 <- rpart(SalePrice ~ ., data = datos, control = rpart.control(maxdepth = 4))
+
+
+rpart.plot(arbol3)
+```
+
+
+Ahora sigamos con deapth 5
+
+```{r tree4, echo=FALSE}
+
+arbol4 <- rpart(SalePrice ~ ., data = datos, control = rpart.control(maxdepth = 5))
+
+
+rpart.plot(arbol4)
+```
+
+Lamentablemente no cambia mucho o nada, pero podemos interpretar cosas con lo que hemos aprendido
+
+## Analizando los árboles
+
+La calidad general (OverallQual) es el factor más importante
+
+El nodo raíz divide los datos en dos ramas principales basadas en si OverallQual < 8 o no.
+Esto indica que la calidad general de la vivienda es un predictor clave del precio de venta.
+Dentro de casas con menor calidad (OverallQual < 8), el vecindario juega un rol importante
+
+Si la casa está en ciertos vecindarios (Blueste, BrDale, etc.), el precio tiende a ser más bajo.
+Para estos vecindarios, el tamaño de la primera planta (1stFlrSF) afecta el precio.
+En casas con mejor calidad (OverallQual ≥ 8), el tamaño de la vivienda es clave
+
+La variable GrLivArea (área habitable sobre el suelo) es un factor determinante en el precio.
+Si GrLivArea es mayor a 2229, los precios son significativamente más altos.
+Los precios más altos ocurren en casas con alta calidad y gran área habitable
+
+Las casas con OverallQual ≥ 9 y GrLivArea ≥ 2229 tienen los precios más elevados .
+
+## Creando varaibles
+
+Vamos a crear variales para que se pueda analizar mejor las cosas
+```{r variable, echo=FALSE}
+media_price <- mean(datos$SalePrice, na.rm = TRUE)
+sd_price <- sd(datos$SalePrice, na.rm = TRUE)
+
+limite_bajo <- media_price - 0.5 * sd_price
+limite_alto <- media_price + 0.5 * sd_price
+
+datos <- datos %>%
+  mutate(CategoriaPrecio = case_when(
+    SalePrice < limite_bajo ~ "Económica",
+    SalePrice >= limite_bajo & SalePrice <= limite_alto ~ "Intermedia",
+    SalePrice > limite_alto ~ "Cara"
+  ))
+
+datos$CategoriaPrecio <- factor(datos$CategoriaPrecio, levels = c("Económica", "Intermedia", "Cara"))
+
+
+table(datos$CategoriaPrecio)
 
 
 ```
-Este Cluster es meramente de TODOS los datos, no se trabajará con estos datos, pero funciona como una comparativa realista con lo que estamos a punto de ver
 
-## Clustering de Datos de prueba
-
-```{r cluster jer2,results='show', echo=FALSE}
-hc <- hclust(dist(subset_datos_norm))  
-plot(hc)  
-rect.hclust(hc, k = 3)  
-subset_datos$Cluster_HC <- cutree(hc, k = 3)
+Ok, ya tenemos los datos, ahora apliquemoslos a ver que sucede
 
 
 
-fcm <- cmeans(subset_datos_norm, centers = 3)  
-subset_datos$Cluster_FCM <- fcm$cluster
+```{r statistics2, echo=FALSE}
 
-mc <- Mclust(subset_datos_norm, 3)
-plot(mc, what = "classification", main="MClust Classification")
-subset_datos$Cluster_Gaussian <- mc$classification
+datos$Categoria <- cut(datos$SalePrice,
+                        breaks = c(-Inf, 141000, 220000, Inf),
+                        labels = c("Económica", "Intermedia", "Cara"))
+
+datos$Categoria <- as.factor(datos$Categoria)
+
+
+carros_train <- subset(datos, select = -SalePrice)
+
+
+arbol_clasificacion <- rpart(Categoria ~ ., data = carros_train, method = "class")
+
+rpart.plot(arbol_clasificacion, type = 4, extra = 104, box.palette = "RdYlGn", shadow.col = "gray")
+```
 
 
 
+Variables como 1stFt SF (tamaño del primer piso), GarageArea (área del garaje), GrLivArea (área habitable) y TotalBsmtSF (área del sótano) determinan la categoría asignada.
+
+Ejemplo: Si 1stFt SF < 1051, el 50% se clasifica como "Económica".
+
+
+Los porcentajes indican la proporción de propiedades que cumplen ciertas condiciones y caen en una categoría.
+
+Ejemplo: Bajo GarageArea < 301, el 21% se clasifica como "Intermedia".
+
+Con esto en mente logramos apreciar como se logran apreciar las nuevas subcategorías creadas gracias a la nueva variable
+
+## Haciendo un Random Forest
+
+
+```{r forest, echo=FALSE}
+library(caret)
+library(dplyr)
+
+datos_clean <- na.omit(datos)  
+datos_clean <- datos_clean %>% mutate_if(is.character, as.factor) 
+
+# ------------------------------------------------------------------------
+# Paso 3: Dividir en entrenamiento y prueba
+set.seed(123)
+
+
+trainData <- datos[trainIndex, ]
+testData <- datos[-trainIndex, ]
+
+# Ajustar los niveles
+testData <- ajustar_niveles(trainData, testData)
+
+# Eliminar filas con NA en testData luego del ajuste de niveles.
+testData <- testData[complete.cases(testData),]
+
+# Asegurar que la columna categoria sea factor en los dos dataframes.
+trainData$Categoria <- as.factor(trainData$Categoria)
+testData$Categoria <- as.factor(testData$Categoria)
+
+# Eliminar filas con NA en Categoria
+trainData <- trainData[!is.na(trainData$Categoria), ]
+
+# Eliminar filas con NA restantes
+trainData <- trainData[complete.cases(trainData), ]
+
+# Modelo Random Forest
+modelo_rf <- randomForest(
+  Categoria ~ .,
+  data = trainData %>% select(-SalePrice),
+  ntree = 500, # Número de árboles (ajustable)
+  mtry = floor(sqrt(ncol(trainData %>% select(-SalePrice)))), # Número de variables consideradas en cada división
+  importance = TRUE # Para calcular la importancia de las variables
+)
+
+# Realizar predicciones
+predicciones_rf <- predict(modelo_rf, newdata = testData %>% select(-SalePrice))
+
+# Asegurarse de que predicciones sea un factor y que los niveles coincidan.
+predicciones_rf <- factor(predicciones_rf, levels = levels(testData$Categoria))
+
+# Matriz de confusión
+conf_matrix_rf <- confusionMatrix(predicciones_rf, testData$Categoria)
+print(conf_matrix_rf)
+
+# Importancia de las variables
+importance(modelo_rf)
 
 ```
-Estos SOn los clusteres creados de manera exitosa con los datos de prueba (que son el 30% unicamente)
 
-resultados para los resumidos datos :
+Esto significa que tu modelo clasifica correctamente el 84.11% de las observaciones en el conjunto de prueba. Es una buena precisión, lo que sugiere que el modelo tiene un rendimiento sólido.
 
-```{r res,results='show', echo=FALSE}
+95% CI (Intervalo de Confianza del 95%): (0.7728, 0.8954)
+Esto indica que, con un 95% de confianza, la precisión real del modelo se encuentra entre el 77.28% y el 89.54%.
 
-sil_fcm <- silhouette(fcm$cluster, dist(subset_datos_norm))
-mean(sil_fcm[,3])  # Silueta para Fuzzy C-Means
+No Information Rate (Tasa de No Información): 0.4901
+Esta es la precisión que obtendrías si siempre predijeras la clase más frecuente. En este caso, es del 49.01%.
 
-sil_mg <- silhouette(mc$classification, dist(subset_datos_norm))
-mean(sil_mg[,3])  # Silueta para Mixture of Gaussians
+P-Value [Acc > NIR]: < 2e-16
+Este valor P es extremadamente bajo, lo que significa que la precisión de tu modelo es significativamente mejor que la tasa de no información. Esto indica que el modelo está aprendiendo patrones reales en los datos
+.
+Kappa: 0.73
 
-# Visualización de Clustering Jerárquico
-hc.cut <- hcut(subset_datos_norm, k = 6, hc_method = "complete")
-fviz_dend(hc.cut, show_labels = FALSE, rect = TRUE)
-fviz_cluster(hc.cut, ellipse.type = "convex")
+Mcnemar's Test P-Value: 0.2102
 
-```
-Estos son los clusteres, son 6 dado que dado a las limitaciones veces son extrañas pero cada una logra traslaparese en algun sentido
+## Resumiendo lo aprendido
 
-resultados para los datos limitados:
-
-```{r re2s,results='show', echo=FALSE}
-
-modelo_simple <- lm(SalePrice ~ GrLivArea, data = subset_datos_numericos)
-
-summary(modelo_simple)
-Sys.setlocale("LC_ALL", "es_ES.UTF-8") 
-
-
-ggplot(subset_datos, aes(x = GrLivArea, y = SalePrice)) +
-  geom_point(color = "blue", alpha = 0.5, size = 1.5) +  
-  geom_smooth(method = "lm", color = "red", se = TRUE) + 
-  scale_y_continuous(labels = scales::comma) + 
-  labs(
-    title = "Relación entre Área Habitable y Precio de Venta",
-    x = "Área Habitable (GrLivArea en pies cuadrados)",
-    y = "Precio de Venta (USD)"
-  ) +
-  theme_minimal() +  
-  coord_cartesian(ylim = c(0, 500000))  
-
-
-
-
-
-
-modelo_stepwise <- step(lm(SalePrice ~ ., data = subset_datos_numericos), direction = "both")
-summary(modelo_stepwise)
-
-plot(modelo_simple$residuals, main="Residuos del Modelo", ylab="Residuos", xlab="Índice")
-abline(h=0, col="red")
-
-# Histograma de residuos
-hist(modelo_simple$residuals, main="Distribución de Residuos", col="lightblue")
-
-
-shapiro.test(modelo_simple$residuals)
-
-
-nuevos_datos <- data.frame(GrLivArea = c(1500, 2000, 2500),
-                           YearBuilt = c(2000, 1990, 2010),
-                           OverallQual = c(7, 6, 8),
-                           TotalBsmtSF = c(900, 1200, 1500))
-
-# Predecir precios de venta con el modelo entrenado
-predicciones <- predict(modelo_simple, nuevos_datos)
-
-# Mostrar predicciones
-print(predicciones)
-```
-Gracias a estas gráficas podemos ver que hay una tendencia positiva entre el área habitable y el precio de venta, entre mayor el area mayor el precio, lo cual se espera, pero hay una variabilidad no aplicada, lo cual nos deja con la duda de si hay factores extra, en cuanto a los residuos del modelo, pasan entre 1500 lo que puede implicar que tiene errores significativos.
-
-La distribución de residuos menciona frecuencias altas en ciertos rangos. Entre Los residuos presentan un rango bastante aplico, lo cual indica observaciones atípicas donde el modelo subestima o sobrestima drásticamente el precio real, la presencia de residuos sugiere también que es insuficiente para la complejidad de los datos, así que eso mismo haremos.
-
-```{r re3s,results='show', echo=FALSE}
-
-ggplot(subset_datos, aes(x = MiscVal, y = SalePrice)) +
-  geom_point(color = "blue", alpha = 0.5) + 
-  geom_smooth(method = "lm", color = "red", se = TRUE) +  
-  labs(title = "Relación entre MiscVal y SalePrice",
-       x = "MiscVal (Valor misceláneo)",
-       y = "SalePrice (Precio de Venta)") +
-  theme_minimal()
-ggplot(subset_datos, aes(x = MiscVal)) +
-  geom_histogram(binwidth = 100, fill = "blue", color = "black", alpha = 0.7) +
-  labs(title = "Distribución de MiscVal", x = "MiscVal", y = "Frecuencia") +
-  theme_minimal()
-
-ggplot(subset_datos, aes(x = log1p(MiscVal), y = SalePrice)) +
-  geom_point(alpha = 0.5, color = "blue") +
-  geom_smooth(method = "lm", color = "red") +
-  labs(title = "Relación entre log(MiscVal + 1) y SalePrice",
-       x = "log(MiscVal + 1)", y = "SalePrice") +
-  theme_minimal()
-
-cor(subset_datos$MiscVal, subset_datos$SalePrice, use = "complete.obs")
-
-```
-Intentando de todo llegamos a la conclusión que estos datos no tienen nada que ver uno del otro, siendo esto un buen ejemplo de que es más complicado de lo que a primera vista se ve, ya que usualmente se pensaría que estos 2 estarían relacionados, pero realmente parece que no es el hecho en este momento
-
-## Intento de multicolinealidad o sobreajuste con GrLivArea, OverallQual y TotalBsmtSF
-
-```{r re4s,results='show', echo=FALSE}
-
-
-set.seed(123)  
-indices <- sample(1:nrow(datos), 0.8 * nrow(datos))  
-train <- datos[indices, ]
-test <- datos[-indices, ]
-
-modelo_train <- lm(SalePrice ~ GrLivArea + OverallQual + TotalBsmtSF, data = train)
-predicciones <- predict(modelo_train, newdata = test)
-
-# Evaluar error en datos de prueba
-error <- mean((predicciones - test$SalePrice)^2)
-print(error)
-
-```
-Intentando encontrar otras cosas correlacionadas no se logra encontrar un patrón claro, aunque son muchas columnas, estudiando una a una entre las más obviadas a otras, realmente no se encuentra colinealidad entre ellas, pero no ha resultado, aun usando los datos completos, aunque usando 80% de entrenamiento
-
-## Resumen
-
-Logre hacer que cada modelo sacará algo interesante de cada uno, sin embargo, se lograrón mejores resultados utilizando los más básicos, como lo es la regresión lineal y Histogramas, utilizando multicolealidad dealmente no se logró algo interesante, pero es sumamente interesante ver el resultado de todas formas 
+A lo largo de este proceso logramos deducir muchas cosas, entre una de ellas es que una de las mayores Si que existen coorelaciones no vistas anteriormente, por ejemplo en un árbol se logro apreciar como los pisos, areas de vivienda y areas extras, lograrón hacer que muchas casas fueran categorizadas de maneras muy distintas, al mismo tiempo logramos precenciar como cada árbol evoluciono, Se logró predecir con una incertidumbre bastante moderada, aunque algo alta, cada uno logro hacer una predicción buena y creo que fue un modelado exitoso
